@@ -24,6 +24,7 @@ from pex.platforms import Platform
 from pex.resolver import resolve as requirement_resolver
 from pex.tracer import Tracer, TRACER
 from pex.translator import ChainedTranslator, EggTranslator, SourceTranslator, WheelTranslator
+from pex.util import DistributionHelper
 
 
 def die(msg, error_code=1):
@@ -267,6 +268,18 @@ def build_pex(args, options):
   else:
     precedence = (EggPackage, SourcePackage)
 
+  for source_dir in options.source_dirs:
+    try:
+      bdist = installer(source_dir).bdist()
+    except installer.Error:
+      die('Failed to run installer for %s' % source_dir, CANNOT_DISTILL)
+    pex_builder.add_dist_location(bdist)
+
+    dist = DistributionHelper.distribution_from_path(bdist)
+    options.requirements.insert(0, dist.as_requirement())
+
+    fetchers.insert(0, Fetcher([os.path.dirname(bdist)]))
+
   with TRACER.timed('Resolving distributions'):
     resolveds = requirement_resolver(
         options.requirements,
@@ -275,20 +288,13 @@ def build_pex(args, options):
         interpreter=interpreter,
         platform=options.platform,
         precedence=precedence,
-        cache=options.cache_dir,
+        cache=None,
         cache_ttl=options.cache_ttl)
 
   for pkg in resolveds:
     log('  %s' % pkg, v=options.verbosity)
     pex_builder.add_distribution(pkg)
     pex_builder.add_requirement(pkg.as_requirement())
-
-  for source_dir in options.source_dirs:
-    try:
-      bdist = installer(source_dir).bdist()
-    except installer.Error:
-      die('Failed to run installer for %s' % source_dir, CANNOT_DISTILL)
-    pex_builder.add_dist_location(bdist)
 
   if options.entry_point is not None:
     log('Setting entry point to %s' % options.entry_point, v=options.verbosity)
